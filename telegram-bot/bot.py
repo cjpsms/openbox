@@ -94,13 +94,18 @@ async def edit_text_safe(editable, text: str) -> None:
 
 
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/start: check this user_id's registration status first, then greet."""
     if update.message is None or update.effective_user is None:
         return
-    if registration.is_registered(update.effective_user.id):
-        await update.message.reply_text("ลงทะเบียนแล้ว ✅ ส่งรูปสกรีนช็อตออเดอร์เพื่อเริ่มใช้งานได้เลย")
+
+    existing = registration.get_registration(update.effective_user.id)
+    if existing is not None:
+        await update.message.reply_text(
+            f"ยินดีต้อนรับกลับมา, {existing['name']} 👋\nส่งรูปสกรีนช็อตออเดอร์เพื่อเริ่มใช้งานได้เลย"
+        )
     else:
         await update.message.reply_text(
-            "ก่อนใช้งาน กรุณาถ่ายรูปบัตรนักเรียนของคุณส่งมาเพื่อลงทะเบียนก่อน"
+            "กรุณาลงทะเบียน / สมัครสมาชิกก่อนใช้งาน\nส่งรูปบัตรนักเรียนของคุณมาเพื่อลงทะเบียน"
         )
 
 
