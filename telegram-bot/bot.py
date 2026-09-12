@@ -5,12 +5,15 @@ telegram-bot demo (smart locker mockup)
 This is a throwaway UI/flow demo, NOT production code. It does not verify
 payment or decode any QR content — it just shows the intended chat flow:
 
-    1. User sends a photo to the bot.
-    2. Bot replies "⏳ Processing..." and shows the "typing..." chat action.
-    3. Bot waits (PROCESSING_DELAY_SECONDS, stand-in for real processing).
-    4. Bot edits that message into an inline keyboard (one button per box
+    0. First-time users must register: send a photo of their student ID
+       card. The bot extracts name + student code (see registration.py)
+       and asks for confirmation before saving the account.
+    1. Once registered, a photo (order screenshot) starts the box flow:
+       bot replies "⏳ Processing..." and shows the "typing..." chat action.
+    2. Bot waits (PROCESSING_DELAY_SECONDS, stand-in for real processing).
+    3. Bot edits that message into an inline keyboard (one button per box
        size) to pick a locker box.
-    5. On button press, bot edits the message to "sending to shelf..." then,
+    4. On button press, bot edits the message to "sending to shelf..." then,
        after a short beat, "data updated, waiting to receive item" (also
        just messages, no real hardware/API call).
 
@@ -22,6 +25,7 @@ import asyncio
 import logging
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -30,10 +34,13 @@ from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
+    CommandHandler,
     ContextTypes,
     MessageHandler,
     filters,
 )
+
+import registration
 
 ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
@@ -70,6 +77,11 @@ BOX_LABELS = {
 PROCESSING_FRAME_INTERVAL_SECONDS = 0.4
 DOTS_CYCLE = ["", ".", "..", "..."]
 
+# user_id -> {"name": ..., "student_code": ...}, awaiting ยืนยัน/ถ่ายใหม่.
+# In-memory only (demo) - lost on restart, same as the rest of this mockup's
+# transient state.
+pending_registrations: dict[int, dict] = {}
+
 
 async def edit_text_safe(editable, text: str) -> None:
     """Edit a Message or CallbackQuery's text, ignoring "not modified"."""
@@ -81,7 +93,105 @@ async def edit_text_safe(editable, text: str) -> None:
             raise
 
 
+async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is None or update.effective_user is None:
+        return
+    if registration.is_registered(update.effective_user.id):
+        await update.message.reply_text("ลงทะเบียนแล้ว ✅ ส่งรูปสกรีนช็อตออเดอร์เพื่อเริ่มใช้งานได้เลย")
+    else:
+        await update.message.reply_text(
+            "ก่อนใช้งาน กรุณาถ่ายรูปบัตรนักเรียนของคุณส่งมาเพื่อลงทะเบียนก่อน"
+        )
+
+
+async def handle_id_card_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Registration step: photo in -> Claude vision extraction -> confirm."""
+    if update.message is None or update.effective_user is None:
+        return
+    user_id = update.effective_user.id
+
+    status = await update.message.reply_text("⏳ กำลังตรวจสอบบัตรนักเรียน...")
+
+    photo = update.message.photo[-1]
+    tg_file = await photo.get_file()
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        image_path = str(Path(tmp_dir) / "student_id.jpg")
+        await tg_file.download_to_drive(image_path)
+
+        try:
+            result = await registration.extract_student_id(image_path)
+        except RuntimeError as e:
+            logger.error("student ID extraction failed: %s", e)
+            await edit_text_safe(
+                status,
+                "⚠️ ตรวจสอบบัตรไม่สำเร็จ (ระบบขัดข้อง) กรุณาลองส่งรูปใหม่อีกครั้ง",
+            )
+            return
+
+    if not result["is_student_id"] or not result["name"] or not result["student_code"]:
+        reason = result["reason"] or "ไม่พบข้อมูลบัตรนักเรียนที่ชัดเจนในรูปนี้"
+        await edit_text_safe(status, f"⚠️ {reason}\nกรุณาถ่ายรูปบัตรนักเรียนใหม่ให้ชัดเจน แล้วส่งอีกครั้ง")
+        return
+
+    pending_registrations[user_id] = {
+        "name": result["name"],
+        "student_code": result["student_code"],
+    }
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ ยืนยัน", callback_data="regconfirm"),
+            InlineKeyboardButton("🔁 ถ่ายใหม่", callback_data="regretry"),
+        ]
+    ]
+    await edit_text_safe(
+        status,
+        f"ตรวจพบข้อมูล:\nชื่อ: {result['name']}\nรหัสนักเรียน: {result['student_code']}\n\nถูกต้องไหม?",
+    )
+    await status.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def handle_reg_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or update.effective_user is None:
+        return
+    await query.answer()
+
+    user_id = update.effective_user.id
+    pending = pending_registrations.pop(user_id, None)
+    if pending is None:
+        await edit_text_safe(query, "ไม่พบข้อมูลที่รอยืนยัน กรุณาส่งรูปบัตรนักเรียนใหม่อีกครั้ง")
+        return
+
+    registration.register(user_id, pending["name"], pending["student_code"])
+    await edit_text_safe(
+        query,
+        f"ลงทะเบียนสำเร็จ ✅\nชื่อ: {pending['name']}\nรหัสนักเรียน: {pending['student_code']}\n\n"
+        "ส่งรูปสกรีนช็อตออเดอร์เพื่อเริ่มใช้งานได้เลย",
+    )
+
+
+async def handle_reg_retry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or update.effective_user is None:
+        return
+    await query.answer()
+    pending_registrations.pop(update.effective_user.id, None)
+    await edit_text_safe(query, "กรุณาถ่ายรูปบัตรนักเรียนใหม่อีกครั้ง แล้วส่งเข้ามา")
+
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Dispatch a photo: unregistered users register first, else box flow."""
+    if update.message is None or update.effective_user is None:
+        return
+
+    if not registration.is_registered(update.effective_user.id):
+        await handle_id_card_photo(update, context)
+        return
+
+    await handle_order_photo(update, context)
+
+
+async def handle_order_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Step 1-4: photo in -> animated 'Processing...' + 'typing' -> box picker."""
     if update.message is None:
         return
@@ -132,9 +242,12 @@ async def handle_box_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def handle_other_messages(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Anything that isn't a photo - nudge the user toward the demo flow."""
-    if update.message is None:
+    if update.message is None or update.effective_user is None:
         return
-    await update.message.reply_text("ส่งรูปภาพมาเพื่อเริ่มต้น (demo: send a photo to start)")
+    if registration.is_registered(update.effective_user.id):
+        await update.message.reply_text("ส่งรูปภาพมาเพื่อเริ่มต้น (demo: send a photo to start)")
+    else:
+        await update.message.reply_text("กรุณาถ่ายรูปบัตรนักเรียนส่งมาเพื่อลงทะเบียนก่อนใช้งาน")
 
 
 def build_application() -> Application:
@@ -148,8 +261,11 @@ def build_application() -> Application:
 
     application = Application.builder().token(token).build()
 
+    application.add_handler(CommandHandler("start", handle_start))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    application.add_handler(CallbackQueryHandler(handle_box_choice))
+    application.add_handler(CallbackQueryHandler(handle_reg_confirm, pattern="^regconfirm$"))
+    application.add_handler(CallbackQueryHandler(handle_reg_retry, pattern="^regretry$"))
+    application.add_handler(CallbackQueryHandler(handle_box_choice, pattern="^box_"))
     application.add_handler(
         MessageHandler(filters.ALL & ~filters.PHOTO & ~filters.COMMAND, handle_other_messages)
     )
