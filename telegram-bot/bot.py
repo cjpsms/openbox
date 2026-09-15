@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
 """
-telegram-bot demo (smart locker mockup)
+customer-bot (openbox smart locker — customer side)
 
-This is a throwaway UI/flow demo, NOT production code. It does not verify
-payment or decode any QR content — it just shows the intended chat flow:
+Thin Telegram client over openbox-api (~/program/openbox/openbox-api),
+which owns the DB, Claude vision calls, and SlipOK verification. Flow:
 
-    0. First-time users must register: send a photo of their student ID
-       card. The bot extracts name + student code (see registration.py)
-       and asks for confirmation before saving the account.
-    1. Once registered, a photo (order screenshot) starts the box flow:
-       bot replies "⏳ Processing..." and shows the "typing..." chat action.
-    2. Bot waits (PROCESSING_DELAY_SECONDS, stand-in for real processing).
-    3. Bot edits that message into an inline keyboard (one button per box
-       size) to pick a locker box.
-    4. On button press, bot edits the message to "sending to shelf..." then,
-       after a short beat, "data updated, waiting to receive item" (also
-       just messages, no real hardware/API call).
+    0. Unregistered users register: photo of student ID -> Claude vision
+       (via the api) extracts name + code -> confirm -> registered.
+    1. Registered + no pending reservation: send an order-screenshot photo
+       -> api extracts platform/order id/recipient -> confirm -> pick a
+       box size -> api creates a reservation (AWAITING_PAYMENT) with the
+       rent amount due.
+    2. Registered + has a pending AWAITING_PAYMENT reservation: the next
+       photo is treated as the payment slip -> api verifies via SlipOK ->
+       on success the reservation moves to WAITING_DROP and the customer
+       waits for a rider to drop the item (openbox-api pushes a Telegram
+       message itself once that happens — see telegram_push.py in the
+       api — this bot doesn't need to poll for it).
+    3. /pickup once the api shows a STORED reservation: opens the box
+       (api checks cam1 presence first) — completion is pushed by the
+       api the same way.
 
-No token is hardcoded. It is read from ../.env (see ../.env.example for the
-expected keys) - shared with the other openbox sub-projects.
+No token is hardcoded. It is read from ../.env (see ../.env.example for
+the expected keys) - shared with the other openbox sub-projects.
 """
 
 import asyncio
@@ -40,7 +44,7 @@ from telegram.ext import (
     filters,
 )
 
-import registration
+import api_client
 
 ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
@@ -65,22 +69,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-PROCESSING_DELAY_SECONDS = 2
-
-# callback_data -> label, so the confirmation message can look it up
-BOX_LABELS = {
-    "box_1": "กล่องขนาด 20x30x30cm",
-    "box_2": "กล่องขนาด 15x20x20cm",
-}
-
-
 PROCESSING_FRAME_INTERVAL_SECONDS = 0.4
 DOTS_CYCLE = ["", ".", "..", "..."]
 
-# user_id -> {"name": ..., "student_code": ...}, awaiting ยืนยัน/ถ่ายใหม่.
-# In-memory only (demo) - lost on restart, same as the rest of this mockup's
-# transient state.
+BOX_LABELS = {
+    "large": "กล่องขนาด 20x30x30cm",
+    "small": "กล่องขนาด 15x20x20cm",
+}
+
+# In-memory, transient — same pattern as the old demo's pending_registrations.
+# user_id -> {"name": ..., "student_code": ...}
 pending_registrations: dict[int, dict] = {}
+# user_id -> extracted order dict, awaiting confirm + box-size pick
+pending_orders: dict[int, dict] = {}
 
 
 async def edit_text_safe(editable, text: str) -> None:
@@ -93,12 +94,21 @@ async def edit_text_safe(editable, text: str) -> None:
             raise
 
 
+async def animate_processing(status_message, seconds: float) -> None:
+    elapsed = 0.0
+    frame = 0
+    while elapsed < seconds:
+        await asyncio.sleep(PROCESSING_FRAME_INTERVAL_SECONDS)
+        elapsed += PROCESSING_FRAME_INTERVAL_SECONDS
+        frame = (frame + 1) % len(DOTS_CYCLE)
+        await edit_text_safe(status_message, f"⏳ Processing{DOTS_CYCLE[frame]}")
+
+
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/start: check this user_id's registration status first, then greet."""
+    """/start: check this user_id's registration status (via the api) first."""
     if update.message is None or update.effective_user is None:
         return
-
-    existing = registration.get_registration(update.effective_user.id)
+    existing = await api_client.get_customer(update.effective_user.id)
     if existing is not None:
         await update.message.reply_text(
             f"ยินดีต้อนรับกลับมา, {existing['name']} 👋\nส่งรูปสกรีนช็อตออเดอร์เพื่อเริ่มใช้งานได้เลย"
@@ -109,12 +119,41 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
 
 
+async def handle_pickup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is None or update.effective_user is None:
+        return
+    reservation = await api_client.get_stored_reservation(update.effective_user.id)
+    if reservation is None:
+        await update.message.reply_text("ยังไม่พบพัสดุที่พร้อมให้รับตอนนี้")
+        return
+    keyboard = [[InlineKeyboardButton("📥 รับของ", callback_data=f"pickup_{reservation['id']}")]]
+    await update.message.reply_text(
+        "พบพัสดุพร้อมรับ 1 ชิ้น กดปุ่มด้านล่างเมื่อยืนอยู่หน้าตู้แล้ว",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def handle_pickup_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or update.effective_user is None:
+        return
+    await query.answer()
+    reservation_id = int(query.data.split("_", 1)[1])
+    try:
+        await api_client.request_pickup(reservation_id, update.effective_user.id)
+    except api_client.ApiError as e:
+        await edit_text_safe(query, f"⚠️ เปิดตู้ไม่สำเร็จ: {e.detail}")
+        return
+    await edit_text_safe(query, "🔓 กำลังเปิดตู้... หยิบของแล้วปิดประตูให้สนิท")
+
+
+# ---------------------------------------------------------- registration
+
 async def handle_id_card_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Registration step: photo in -> Claude vision extraction -> confirm."""
+    """Registration step: photo in -> Claude vision (via api) -> confirm."""
     if update.message is None or update.effective_user is None:
         return
     user_id = update.effective_user.id
-
     status = await update.message.reply_text("⏳ กำลังตรวจสอบบัตรนักเรียน...")
 
     photo = update.message.photo[-1]
@@ -122,32 +161,23 @@ async def handle_id_card_photo(update: Update, context: ContextTypes.DEFAULT_TYP
     with tempfile.TemporaryDirectory() as tmp_dir:
         image_path = str(Path(tmp_dir) / "student_id.jpg")
         await tg_file.download_to_drive(image_path)
-
         try:
-            result = await registration.extract_student_id(image_path)
-        except RuntimeError as e:
+            result = await api_client.verify_student_id(image_path)
+        except api_client.ApiError as e:
             logger.error("student ID extraction failed: %s", e)
-            await edit_text_safe(
-                status,
-                "⚠️ ตรวจสอบบัตรไม่สำเร็จ (ระบบขัดข้อง) กรุณาลองส่งรูปใหม่อีกครั้ง",
-            )
+            await edit_text_safe(status, "⚠️ ตรวจสอบบัตรไม่สำเร็จ (ระบบขัดข้อง) กรุณาลองส่งรูปใหม่อีกครั้ง")
             return
 
-    if not result["is_student_id"] or not result["name"] or not result["student_code"]:
-        reason = result["reason"] or "ไม่พบข้อมูลบัตรนักเรียนที่ชัดเจนในรูปนี้"
+    if not result.get("is_student_id") or not result.get("name") or not result.get("student_code"):
+        reason = result.get("reason") or "ไม่พบข้อมูลบัตรนักเรียนที่ชัดเจนในรูปนี้"
         await edit_text_safe(status, f"⚠️ {reason}\nกรุณาถ่ายรูปบัตรนักเรียนใหม่ให้ชัดเจน แล้วส่งอีกครั้ง")
         return
 
-    pending_registrations[user_id] = {
-        "name": result["name"],
-        "student_code": result["student_code"],
-    }
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ ยืนยัน", callback_data="regconfirm"),
-            InlineKeyboardButton("🔁 ถ่ายใหม่", callback_data="regretry"),
-        ]
-    ]
+    pending_registrations[user_id] = {"name": result["name"], "student_code": result["student_code"]}
+    keyboard = [[
+        InlineKeyboardButton("✅ ยืนยัน", callback_data="regconfirm"),
+        InlineKeyboardButton("🔁 ถ่ายใหม่", callback_data="regretry"),
+    ]]
     await edit_text_safe(
         status,
         f"ตรวจพบข้อมูล:\nชื่อ: {result['name']}\nรหัสนักเรียน: {result['student_code']}\n\nถูกต้องไหม?",
@@ -160,14 +190,16 @@ async def handle_reg_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if query is None or update.effective_user is None:
         return
     await query.answer()
-
     user_id = update.effective_user.id
     pending = pending_registrations.pop(user_id, None)
     if pending is None:
         await edit_text_safe(query, "ไม่พบข้อมูลที่รอยืนยัน กรุณาส่งรูปบัตรนักเรียนใหม่อีกครั้ง")
         return
-
-    registration.register(user_id, pending["name"], pending["student_code"])
+    try:
+        await api_client.register_customer(user_id, pending["name"], pending["student_code"])
+    except api_client.ApiError as e:
+        await edit_text_safe(query, f"⚠️ ลงทะเบียนไม่สำเร็จ: {e.detail}")
+        return
     await edit_text_safe(
         query,
         f"ลงทะเบียนสำเร็จ ✅\nชื่อ: {pending['name']}\nรหัสนักเรียน: {pending['student_code']}\n\n"
@@ -184,75 +216,159 @@ async def handle_reg_retry(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await edit_text_safe(query, "กรุณาถ่ายรูปบัตรนักเรียนใหม่อีกครั้ง แล้วส่งเข้ามา")
 
 
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Dispatch a photo: unregistered users register first, else box flow."""
+# --------------------------------------------------------------- order flow
+
+async def handle_order_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message is None or update.effective_user is None:
         return
+    user_id = update.effective_user.id
 
-    if not registration.is_registered(update.effective_user.id):
+    status = await update.message.reply_text("⏳ Processing")
+    await context.bot.send_chat_action(chat_id=update.message.chat_id, action=ChatAction.TYPING)
+
+    photo = update.message.photo[-1]
+    tg_file = await photo.get_file()
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        image_path = str(Path(tmp_dir) / "order.jpg")
+        await tg_file.download_to_drive(image_path)
+        animate_task = asyncio.create_task(animate_processing(status, 2.0))
+        try:
+            result = await api_client.verify_order_screenshot(image_path)
+        except api_client.ApiError as e:
+            animate_task.cancel()
+            await edit_text_safe(status, f"⚠️ อ่านสกรีนช็อตไม่สำเร็จ: {e.detail}")
+            return
+        await animate_task
+
+    if not result.get("is_order_screenshot"):
+        reason = result.get("reason") or "ไม่แน่ใจว่าเป็นสกรีนช็อตออเดอร์"
+        await edit_text_safe(status, f"⚠️ {reason}\nกรุณาส่งสกรีนช็อตออเดอร์จากแอปช้อปปิ้งอีกครั้ง")
+        return
+
+    pending_orders[user_id] = result
+    lines = [
+        "ตรวจพบออเดอร์:",
+        f"แพลตฟอร์ม: {result.get('platform') or '-'}",
+        f"เลขที่ออเดอร์: {result.get('order_id') or '-'}",
+        f"ร้าน: {result.get('shop') or '-'}",
+        f"ผู้รับ: {result.get('recipient_name') or '-'}",
+        "",
+        "ถูกต้องไหม?",
+    ]
+    keyboard = [[
+        InlineKeyboardButton("✅ ยืนยัน", callback_data="orderconfirm"),
+        InlineKeyboardButton("🔁 ส่งรูปใหม่", callback_data="orderretry"),
+    ]]
+    await edit_text_safe(status, "\n".join(lines))
+    await status.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def handle_order_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or update.effective_user is None:
+        return
+    await query.answer()
+    if update.effective_user.id not in pending_orders:
+        await edit_text_safe(query, "ไม่พบออเดอร์ที่รอยืนยัน กรุณาส่งสกรีนช็อตใหม่อีกครั้ง")
+        return
+    keyboard = [
+        [InlineKeyboardButton(BOX_LABELS["large"], callback_data="boxsize_large")],
+        [InlineKeyboardButton(BOX_LABELS["small"], callback_data="boxsize_small")],
+    ]
+    await edit_text_safe(query, "เลือกขนาดล็อกเกอร์ที่ต้องการ:")
+    await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def handle_order_retry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or update.effective_user is None:
+        return
+    await query.answer()
+    pending_orders.pop(update.effective_user.id, None)
+    await edit_text_safe(query, "กรุณาส่งสกรีนช็อตออเดอร์ใหม่อีกครั้ง")
+
+
+async def handle_box_size_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or update.effective_user is None:
+        return
+    await query.answer()
+    user_id = update.effective_user.id
+    order = pending_orders.pop(user_id, None)
+    if order is None:
+        await edit_text_safe(query, "ไม่พบออเดอร์ที่รอยืนยัน กรุณาส่งสกรีนช็อตใหม่อีกครั้ง")
+        return
+
+    box_size = query.data.split("_", 1)[1]  # "large" | "small"
+    try:
+        reservation = await api_client.create_reservation(user_id, box_size, order)
+    except api_client.ApiError as e:
+        await edit_text_safe(query, f"⚠️ จองไม่สำเร็จ: {e.detail}")
+        return
+
+    await edit_text_safe(
+        query,
+        f"จอง{BOX_LABELS[box_size]}แล้ว ✅\n"
+        f"ค่าเช่า: {reservation['amount_due_thb']:.0f} บาท\n\n"
+        "กรุณาโอนเงินแล้วส่งรูปสลิปมาที่แชทนี้เพื่อยืนยันการชำระเงิน",
+    )
+
+
+# --------------------------------------------------------------- payment
+
+async def handle_slip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, reservation: dict) -> None:
+    if update.message is None:
+        return
+    status = await update.message.reply_text("⏳ กำลังตรวจสอบสลิป...")
+    photo = update.message.photo[-1]
+    tg_file = await photo.get_file()
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        image_path = str(Path(tmp_dir) / "slip.jpg")
+        await tg_file.download_to_drive(image_path)
+        try:
+            updated = await api_client.pay_reservation(reservation["id"], image_path)
+        except api_client.ApiError as e:
+            await edit_text_safe(status, f"⚠️ ตรวจสอบสลิปไม่สำเร็จ: {e.detail}\nกรุณาลองส่งสลิปใหม่อีกครั้ง")
+            return
+
+    await edit_text_safe(
+        status,
+        f"ชำระเงินสำเร็จ ✅ (สถานะ: {updated['status']})\n"
+        "รอไรเดอร์มาส่งของ จะแจ้งเตือนทันทีที่ของถึง",
+    )
+
+
+# --------------------------------------------------------------- dispatch
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Dispatch a photo based on where this user currently is in the flow."""
+    if update.message is None or update.effective_user is None:
+        return
+    user_id = update.effective_user.id
+
+    customer = await api_client.get_customer(user_id)
+    if customer is None:
         await handle_id_card_photo(update, context)
+        return
+
+    pending_reservation = await api_client.get_pending_reservation(user_id)
+    if pending_reservation is not None:
+        await handle_slip_photo(update, context, pending_reservation)
         return
 
     await handle_order_photo(update, context)
 
 
-async def handle_order_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Step 1-4: photo in -> animated 'Processing...' + 'typing' -> box picker."""
-    if update.message is None:
-        return
-
-    # Two processing indicators, belt-and-suspenders: the "typing..." chat
-    # action (shows in the header, if the client renders it) plus a real,
-    # animated "⏳ Processing..." message (guaranteed visible everywhere),
-    # which gets edited in place into the box picker below (stays one
-    # message throughout).
-    status = await update.message.reply_text("⏳ Processing")
-    await context.bot.send_chat_action(chat_id=update.message.chat_id, action=ChatAction.TYPING)
-
-    # Simulated processing delay (e.g. would-be QR decode / payment check),
-    # animated by cycling the trailing dots every ~0.4s.
-    elapsed = 0.0
-    frame = 0
-    while elapsed < PROCESSING_DELAY_SECONDS:
-        await asyncio.sleep(PROCESSING_FRAME_INTERVAL_SECONDS)
-        elapsed += PROCESSING_FRAME_INTERVAL_SECONDS
-        frame = (frame + 1) % len(DOTS_CYCLE)
-        await edit_text_safe(status, f"⏳ Processing{DOTS_CYCLE[frame]}")
-
-    keyboard = [
-        [InlineKeyboardButton(BOX_LABELS["box_1"], callback_data="box_1")],
-        [InlineKeyboardButton(BOX_LABELS["box_2"], callback_data="box_2")],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await status.edit_text(
-        "เลือกล็อกเกอร์ที่ต้องการ:",
-        reply_markup=reply_markup,
-    )
-
-
-async def handle_box_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Step 5: user tapped a box button -> sending-to-shelf -> waiting for item."""
-    query = update.callback_query
-    if query is None:
-        return
-
-    await query.answer()  # ack the tap so Telegram stops the loading spinner
-
-    label = BOX_LABELS.get(query.data, query.data)
-    await edit_text_safe(query, f"เลือก{label}แล้ว\n📤 กำลังส่งข้อมูลไปยังชั้นสินค้า...")
-    await asyncio.sleep(0.5)
-    await edit_text_safe(query, f"เลือก{label}แล้ว\n✅ อัปเดตข้อมูลแล้ว กำลังรอรับของ")
-
-
 async def handle_other_messages(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Anything that isn't a photo - nudge the user toward the demo flow."""
     if update.message is None or update.effective_user is None:
         return
-    if registration.is_registered(update.effective_user.id):
-        await update.message.reply_text("ส่งรูปภาพมาเพื่อเริ่มต้น (demo: send a photo to start)")
-    else:
+    customer = await api_client.get_customer(update.effective_user.id)
+    if customer is None:
         await update.message.reply_text("กรุณาถ่ายรูปบัตรนักเรียนส่งมาเพื่อลงทะเบียนก่อนใช้งาน")
+    else:
+        await update.message.reply_text(
+            "ส่งรูปสกรีนช็อตออเดอร์เพื่อจองล็อกเกอร์ หรือพิมพ์ /pickup เพื่อรับของ"
+        )
 
 
 def build_application() -> Application:
@@ -267,10 +383,14 @@ def build_application() -> Application:
     application = Application.builder().token(token).build()
 
     application.add_handler(CommandHandler("start", handle_start))
+    application.add_handler(CommandHandler("pickup", handle_pickup))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(CallbackQueryHandler(handle_reg_confirm, pattern="^regconfirm$"))
     application.add_handler(CallbackQueryHandler(handle_reg_retry, pattern="^regretry$"))
-    application.add_handler(CallbackQueryHandler(handle_box_choice, pattern="^box_"))
+    application.add_handler(CallbackQueryHandler(handle_order_confirm, pattern="^orderconfirm$"))
+    application.add_handler(CallbackQueryHandler(handle_order_retry, pattern="^orderretry$"))
+    application.add_handler(CallbackQueryHandler(handle_box_size_choice, pattern="^boxsize_"))
+    application.add_handler(CallbackQueryHandler(handle_pickup_button, pattern="^pickup_"))
     application.add_handler(
         MessageHandler(filters.ALL & ~filters.PHOTO & ~filters.COMMAND, handle_other_messages)
     )
@@ -280,7 +400,7 @@ def build_application() -> Application:
 
 def main() -> None:
     application = build_application()
-    logger.info("Starting bot (polling)...")
+    logger.info("Starting bot (polling)... API base: %s", api_client.API_BASE)
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
