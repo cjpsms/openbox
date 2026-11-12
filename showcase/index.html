@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenBox ตู้รับพัสดุอัจฉริยะ</title>
+<meta name="description" content="OpenBox: ตู้ล็อกเกอร์รับพัสดุออนไลน์ที่ใช้ Telegram, AI อ่านภาพ, ตรวจสลิปจริง และล็อกเกอร์ที่ควบคุมด้วย STM32">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bai+Jamjuree:wght@500;600;700&family=IBM+Plex+Sans+Thai:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --cobalt:#2547F5; --cobalt-d:#1832BF; --ink:#0D1233; --ink-2:#161C4A;
+  --ice:#EAEEFF; --paper:#F8F9FF; --sun:#FFD43B; --mint:#35D6A0; --kraft:#E9B25A;
+  --line:rgba(13,18,51,.13); --muted:#5A6088;
+  --display:"Bai Jamjuree","IBM Plex Sans Thai",system-ui,sans-serif;
+  --body:"IBM Plex Sans Thai",system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0}
+html{scroll-behavior:smooth}
+body{font-family:var(--body);background:var(--paper);color:var(--ink);line-height:1.75;font-size:17px;-webkit-font-smoothing:antialiased}
+a{color:inherit}
+:focus-visible{outline:3px solid var(--sun);outline-offset:3px;border-radius:6px}
+.wrap{width:min(1180px,100% - 40px);margin-inline:auto}
+h1,h2,h3{font-family:var(--display);line-height:1.12;font-weight:700;letter-spacing:-.01em}
+
+/* ---------- hero ---------- */
+.hero{background:var(--cobalt);color:#fff;position:relative;overflow:hidden;padding:36px 0 90px}
+.hero::before{content:"";position:absolute;inset:0;background:radial-gradient(rgba(255,255,255,.22) 1.2px,transparent 1.4px) 0 0/28px 28px;mask-image:linear-gradient(115deg,transparent 30%,#000 90%);-webkit-mask-image:linear-gradient(115deg,transparent 30%,#000 90%)}
+.hero::after{content:"";position:absolute;right:-8%;top:-30%;width:62vw;height:62vw;border-radius:50%;background:radial-gradient(closest-side,rgba(255,255,255,.18),transparent)}
+nav{display:flex;justify-content:space-between;align-items:center;position:relative;z-index:2;padding-bottom:44px}
+.logo{font-family:var(--display);font-weight:700;font-size:23px;display:flex;align-items:center;gap:10px;text-decoration:none}
+.logo i{width:26px;height:26px;border:3px solid #fff;border-radius:7px;position:relative;display:block}
+.logo i::after{content:"";position:absolute;left:3px;right:3px;top:50%;height:3px;background:var(--sun);transform:translateY(-50%)}
+nav .links{display:flex;gap:26px;font-size:15px}
+nav .links a{text-decoration:none;opacity:.85}
+nav .links a:hover{opacity:1}
+.hero-grid{display:grid;grid-template-columns:1.12fr .88fr;gap:40px;align-items:center;position:relative;z-index:2}
+h1{font-size:clamp(54px,9.2vw,128px);line-height:1.02;letter-spacing:-.025em}
+.hero p.lead{font-size:clamp(18px,1.6vw,21px);max-width:30em;margin-top:26px;color:#E3E8FF;font-weight:300}
+.cta{display:flex;gap:14px;flex-wrap:wrap;margin-top:34px}
+.btn{font:600 16px var(--body);padding:15px 26px;border-radius:999px;text-decoration:none;border:2px solid #fff;color:#fff;transition:.2s;cursor:pointer;background:none;display:inline-block}
+.btn.solid{background:var(--sun);border-color:var(--sun);color:var(--ink)}
+.btn:hover{transform:translateY(-2px)}
+.btn.solid:hover{box-shadow:0 10px 26px rgba(0,0,0,.25)}
+.hero-locker{display:flex;flex-direction:column;align-items:center;gap:20px}
+.hint{font-size:14px;color:#CFD8FF}
+
+/* ---------- locker component ---------- */
+.cab{width:290px;background:#fff;border-radius:22px;padding:14px 14px 22px;box-shadow:0 40px 70px -20px rgba(5,10,60,.6),inset 0 -6px 0 rgba(13,18,51,.08);display:grid;gap:12px;position:relative}
+.cab::after{content:"";position:absolute;left:24px;right:24px;bottom:-12px;height:12px;background:var(--ink);border-radius:0 0 10px 10px;opacity:.35;z-index:-1}
+.scan{height:46px;border-radius:12px;background:linear-gradient(180deg,#0A0F2E,#1A2160);display:flex;align-items:center;justify-content:space-between;padding:0 16px;color:#9FAAFF;font-size:12.5px}
+.sled{width:12px;height:12px;border-radius:50%;background:#2A3270;transition:.3s}
+.scan[data-on="1"] .sled{background:var(--sun);box-shadow:0 0 14px 3px var(--sun)}
+.scan[data-on="1"]{box-shadow:inset 0 0 0 2px rgba(255,212,59,.5)}
+.bx{position:relative;perspective:900px;border-radius:12px}
+.bx.big{height:186px}.bx.small{height:108px}
+.cav{position:absolute;inset:0;background:linear-gradient(160deg,#080C28,#141A4A);border-radius:12px;display:grid;place-items:end center;padding-bottom:12px;overflow:hidden}
+.parcel{width:58%;height:54%;background:var(--kraft);border-radius:6px;position:relative;opacity:0;transform:translateY(14px) scale(.9);transition:.45s cubic-bezier(.3,1.4,.5,1);box-shadow:inset 0 -8px 0 rgba(0,0,0,.12)}
+.small .parcel{height:62%}
+.parcel::before{content:"";position:absolute;left:44%;width:12%;top:0;bottom:0;background:rgba(255,255,255,.55)}
+.bx[data-p="1"] .parcel{opacity:1;transform:none}
+.door{position:absolute;inset:0;border-radius:12px;background:linear-gradient(160deg,#F5F7FF,#DCE3FF);border:2px solid #C3CCF5;transform-origin:left center;transition:transform .8s cubic-bezier(.5,0,.2,1);backface-visibility:hidden;cursor:default;display:block;width:100%}
+.bx[data-act="1"] .door{cursor:pointer}
+.bx[data-s="open"] .door{transform:rotateY(-112deg)}
+.num{position:absolute;left:14px;top:12px;font:700 22px var(--display);color:var(--cobalt)}
+.led{position:absolute;right:15px;top:17px;width:12px;height:12px;border-radius:50%;background:var(--mint);box-shadow:0 0 10px var(--mint);transition:.3s}
+.bx[data-s="reserved"] .led{background:var(--sun);box-shadow:0 0 12px var(--sun);animation:blink 1s infinite}
+.bx[data-s="stored"] .led{background:#FF6B6B;box-shadow:0 0 10px #FF6B6B}
+.bx[data-s="open"] .led{background:var(--cobalt);box-shadow:0 0 10px var(--cobalt)}
+.handle{position:absolute;right:16px;top:50%;width:7px;height:42px;border-radius:5px;background:#9AA6E8;transform:translateY(-50%)}
+.state{position:absolute;left:14px;bottom:11px;font-size:13px;color:var(--muted)}
+@keyframes blink{50%{opacity:.25}}
+
+/* ---------- features ---------- */
+section{padding:110px 0}
+.sec-title{font-size:clamp(34px,5vw,60px);max-width:20em;text-wrap:balance}
+.sec-sub{color:var(--muted);max-width:34em;margin-top:18px}
+.feat{margin-top:56px;border-top:2px solid var(--ink)}
+.feat-row{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:40px;padding:34px 0;border-bottom:1px solid var(--line);align-items:baseline}
+.feat-row h3{font-size:clamp(24px,3vw,36px)}
+.feat-row p{color:#3A4070}
+.feat-row code,.chip{font:500 13.5px "IBM Plex Sans Thai",monospace;background:var(--ice);padding:2px 9px;border-radius:7px;color:var(--cobalt-d)}
+
+/* ---------- demo ---------- */
+#demo{background:var(--ink);color:#fff}
+#demo .sec-sub{color:#AEB6E6}
+.tabs{display:inline-flex;background:var(--ink-2);border-radius:999px;padding:5px;margin-top:34px}
+.tab{font:600 16px var(--body);color:#AEB6E6;background:none;border:0;padding:11px 26px;border-radius:999px;cursor:pointer;transition:.2s}
+.tab[aria-selected="true"]{background:#fff;color:var(--ink)}
+.demo-grid{display:grid;grid-template-columns:230px 340px minmax(0,1fr);gap:44px;margin-top:44px;align-items:start}
+.steps{list-style:none;padding:0;display:grid;gap:4px;position:relative}
+.steps button{all:unset;box-sizing:border-box;cursor:pointer;display:grid;grid-template-columns:24px 1fr;gap:12px;padding:9px 10px;border-radius:12px;font-size:14.5px;line-height:1.45;color:#8E97CE;width:100%}
+.steps button:hover{background:var(--ink-2)}
+.steps button:focus-visible{outline:3px solid var(--sun)}
+.steps .dot{width:20px;height:20px;border-radius:50%;border:2px solid #4A5391;margin-top:2px;position:relative}
+.steps .done{color:#fff}
+.steps .done .dot{background:var(--mint);border-color:var(--mint)}
+.steps .done .dot::after{content:"";position:absolute;left:5px;top:1px;width:5px;height:10px;border:solid var(--ink);border-width:0 2.5px 2.5px 0;transform:rotate(45deg)}
+.steps .now{color:#fff;background:var(--ink-2)}
+.steps .now .dot{border-color:var(--sun);box-shadow:0 0 0 4px rgba(255,212,59,.22)}
+.phone{width:340px;height:640px;border-radius:44px;background:#05081F;padding:11px;box-shadow:0 0 0 2px #2A3270,0 50px 80px -30px #000;display:flex;flex-direction:column}
+.screen{flex:1;border-radius:34px;background:#E6EBF5;display:flex;flex-direction:column;overflow:hidden;color:var(--ink)}
+.bar{background:var(--cobalt);color:#fff;padding:16px 18px 12px;display:flex;gap:11px;align-items:center}
+.av{width:36px;height:36px;border-radius:50%;background:#fff;position:relative;flex:none}
+.av::after{content:"";position:absolute;left:8px;right:8px;top:50%;height:3px;background:var(--cobalt);transform:translateY(-50%)}
+.bar b{font:700 16px var(--display);display:block;line-height:1.2}
+.bar small{font-size:12px;opacity:.8}
+.chat>*{flex:none}
+.chat{flex:1;overflow-y:auto;padding:14px 12px;display:flex;flex-direction:column;gap:9px;scroll-behavior:smooth}
+.m{max-width:84%;padding:9px 13px;border-radius:17px;font-size:14.5px;line-height:1.55;animation:pop .28s ease-out both}
+.m.bot{background:#fff;border-bottom-left-radius:5px;align-self:flex-start}
+.m.me{background:var(--cobalt);color:#fff;border-bottom-right-radius:5px;align-self:flex-end}
+.m.res{padding:12px 14px;min-width:70%}
+.m.res h4{font:700 14px var(--display);color:var(--cobalt-d);margin-bottom:5px;display:flex;align-items:center;gap:8px}
+.m.res h4::before{content:"";width:16px;height:16px;border-radius:50%;background:var(--mint);flex:none;box-shadow:inset 0 0 0 4px var(--mint),inset 0 0 0 16px #fff;background:conic-gradient(var(--mint) 0 100%)}
+.m.res dl{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:13.5px}
+.m.res dt{color:var(--muted)}.m.res dd{margin:0;font-weight:500}
+.m.typing{display:flex;gap:5px;padding:13px 15px}
+.m.typing i{width:7px;height:7px;border-radius:50%;background:#98A1CC;animation:bounce 1s infinite}
+.m.typing i:nth-child(2){animation-delay:.15s}.m.typing i:nth-child(3){animation-delay:.3s}
+@keyframes bounce{40%{transform:translateY(-5px);background:var(--cobalt)}}
+@keyframes pop{from{opacity:0;transform:translateY(8px) scale(.97)}}
+.photo{align-self:flex-end;width:62%;border-radius:15px 15px 5px 15px;background:#fff;padding:9px;position:relative;overflow:hidden;animation:pop .28s both}
+.photo .t{font:600 11px var(--display);color:var(--muted);margin-bottom:7px}
+.photo .ln{height:6px;border-radius:3px;background:#D5DBF2;margin:5px 0}
+.photo .ln.s{width:60%}.photo .ln.m2{width:80%}
+.pf{display:flex;gap:9px;align-items:center}
+.pf .ph{width:34px;height:42px;border-radius:6px;background:linear-gradient(160deg,#9FB0FF,#5C74F2);flex:none}
+.pf .col{flex:1}
+.qr{width:46px;height:46px;background:conic-gradient(var(--ink) 25%,#fff 0 50%,var(--ink) 0 75%,#fff 0) 0 0/12px 12px;border:4px solid #fff;outline:2px solid var(--ink);flex:none}
+.bar-code{height:30px;margin-top:6px;background:repeating-linear-gradient(90deg,var(--ink) 0 2px,#fff 2px 4px,var(--ink) 4px 5px,#fff 5px 8px)}
+.photo::after{content:"";position:absolute;left:0;right:0;height:26px;top:-30px;background:linear-gradient(180deg,transparent,rgba(37,71,245,.5));animation:sweep 1.1s ease-in-out 1 both}
+@keyframes sweep{to{top:100%}}
+.dock{padding:12px;background:#fff;border-top:1px solid #D9DFF2}
+.act{width:100%;font:600 15px var(--body);padding:13px 14px;border-radius:14px;border:0;background:var(--cobalt);color:#fff;cursor:pointer;transition:.15s;line-height:1.4}
+.act:hover:not(:disabled){background:var(--cobalt-d)}
+.act:disabled{background:#C8CFEA;cursor:wait}
+.act.sys{background:var(--sun);color:var(--ink)}
+.side{display:grid;gap:22px;align-content:start}
+.side .cab{margin-inline:0}
+.behind{background:var(--ink-2);border-radius:18px;padding:20px 22px;border:1px solid #2A3270;max-width:430px}
+.behind small{color:#8E97CE;font-size:13.5px;display:block}
+.behind .ep{display:inline-block;margin:8px 0 8px;font:500 14px "IBM Plex Sans Thai",monospace;background:#0A0F2E;color:var(--sun);padding:4px 11px;border-radius:8px}
+.behind p{color:#D0D6F5;font-size:15px;line-height:1.65}
+.side-row{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start}
+.note{color:#8E97CE;font-size:13.5px;margin-top:30px}
+
+/* ---------- architecture ---------- */
+#arch{background:var(--ice)}
+.arch{display:grid;grid-template-columns:1fr 1.15fr 1fr;gap:70px;margin-top:56px;align-items:center;position:relative}
+.col{display:grid;gap:16px}
+.node{all:unset;box-sizing:border-box;cursor:pointer;background:#fff;border:2px solid var(--ink);border-radius:16px;padding:16px 18px;position:relative;transition:.2s;display:block;width:100%}
+.node b{font:700 18px var(--display);display:block}
+.node span{font-size:14px;color:var(--muted)}
+.node:hover,.node[aria-pressed="true"]{background:var(--ink);color:#fff;transform:translateY(-3px)}
+.node:hover span,.node[aria-pressed="true"] span{color:#B9C1F0}
+.node:focus-visible{outline:3px solid var(--cobalt);outline-offset:3px}
+.node.core{background:var(--cobalt);color:#fff;border-color:var(--cobalt);padding:34px 26px;text-align:center;box-shadow:0 26px 50px -18px rgba(37,71,245,.7)}
+.node.core span{color:#D6DDFF}
+.node.core b{font-size:26px}
+.node.core:hover,.node.core[aria-pressed="true"]{background:var(--cobalt-d);border-color:var(--cobalt-d)}
+.col:first-child .node::after,.col:last-child .node::before{content:"";position:absolute;top:50%;width:70px;height:2px;background:var(--ink)}
+.col:first-child .node::after{left:100%}
+.col:last-child .node::before{right:100%}
+.detail{margin-top:46px;background:#fff;border-radius:22px;padding:30px 34px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:30px;align-items:start;border:2px solid var(--ink)}
+.detail h3{font-size:28px}
+.detail p{color:#3A4070}
+.detail .tags{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.hw{margin-top:34px;display:flex;flex-wrap:wrap;gap:10px}
+.hw .chip{background:#fff;border:1.5px solid var(--line);font-size:14.5px;padding:7px 15px;border-radius:999px;color:var(--ink)}
+
+/* ---------- status ---------- */
+.status{display:grid;grid-template-columns:1fr 1fr;gap:70px;margin-top:50px}
+.status h3{font-size:30px;padding-bottom:16px;border-bottom:2px solid var(--ink)}
+.status ul{list-style:none;padding:0}
+.status li{padding:15px 0 15px 34px;border-bottom:1px solid var(--line);position:relative}
+.status .ok li::before{content:"";position:absolute;left:4px;top:19px;width:7px;height:14px;border:solid var(--mint);border-width:0 3px 3px 0;transform:rotate(45deg)}
+.status .todo li::before{content:"";position:absolute;left:3px;top:21px;width:14px;height:14px;border:3px solid var(--cobalt);border-radius:50%}
+
+footer{background:var(--cobalt);color:#fff;padding:70px 0 54px}
+footer .big{font:700 clamp(40px,7vw,92px)/1 var(--display);letter-spacing:-.02em}
+footer p{margin-top:20px;color:#D6DDFF}
+footer .row{display:flex;gap:16px;flex-wrap:wrap;margin-top:30px}
+
+@media(max-width:1060px){
+  .demo-grid{grid-template-columns:340px minmax(0,1fr)}
+  .steps{grid-column:1/-1;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+}
+@media(max-width:860px){
+  .hero-grid,.feat-row,.status,.detail{grid-template-columns:1fr}
+  .demo-grid{grid-template-columns:1fr;justify-items:center}
+  .side{width:100%;justify-items:center}
+  .arch{grid-template-columns:1fr;gap:18px}
+  .col:first-child .node::after,.col:last-child .node::before{display:none}
+  nav .links{display:none}
+  section{padding:80px 0}
+  .feat-row{gap:8px}
+}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <nav>
+      <a class="logo" href="#"><i></i>OpenBox</a>
+      <div class="links"><a href="#features">ทำอะไรได้บ้าง</a><a href="#demo">ลองใช้</a><a href="#arch">ระบบทำงานอย่างไร</a><a href="#status">ความคืบหน้า</a></div>
+    </nav>
+    <div class="hero-grid">
+      <div>
+        <h1>ของมาถึง<br>ตู้เปิดให้เอง</h1>
+        <p class="lead">OpenBox คือตู้ล็อกเกอร์รับพัสดุจากร้านออนไลน์ ลูกค้าจองและจ่ายเงินผ่าน Telegram ไรเดอร์วางของ ระบบตรวจให้ครบ แล้วตู้ก็ปลดล็อกเฉพาะตอนที่ถูกคนถูกเวลา</p>
+        <div class="cta">
+          <a class="btn solid" href="#demo">ลองกดดูการทำงาน</a>
+          <a class="btn" href="https://github.com/cjpsms/openbox">ดูโค้ดบน GitHub</a>
+        </div>
+      </div>
+      <div class="hero-locker">
+        <div id="heroLocker"></div>
+        <p class="hint">ลองกดที่ประตูตู้ดู</p>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section id="features">
+  <div class="wrap">
+    <h2 class="sec-title">ตู้ใบเดียว ที่ตรวจคนก่อนเปิด</h2>
+    <p class="sec-sub">ตู้รับพัสดุทั่วไปเชื่อรหัสที่ส่งมา OpenBox ตรวจตัวคน ตัวของ และเงิน ก่อนจะปลดล็อกทุกครั้ง</p>
+    <div class="feat">
+      <div class="feat-row"><h3>AI อ่านภาพแทนการกรอกฟอร์ม</h3><p>ลูกค้าแค่ส่งรูป ระบบใช้ Claude vision อ่านบัตรนักเรียน ภาพออเดอร์จากแอปช้อปปิ้ง และป้ายพัสดุ แล้วดึงชื่อกับเลขพัสดุออกมาเอง ไม่ต้องพิมพ์สักตัว</p></div>
+      <div class="feat-row"><h3>ตรวจสลิปโอนเงินจริง</h3><p>ค่าเช่าตู้จ่ายด้วยการโอนเงิน ระบบอ่าน QR บนสลิปแล้วเช็กกับ <span class="chip">SlipOK</span> ว่าเป็นสลิปจริง ยอดตรง และไม่เคยถูกใช้ซ้ำ</p></div>
+      <div class="feat-row"><h3>ไรเดอร์ต้องผ่านการคัดกรอง</h3><p>ไรเดอร์ลงทะเบียนด้วยชื่อ เบอร์โทรที่ยืนยันผ่าน Telegram และรูปบัตรพนักงาน AI คัดกรองเบื้องต้น แล้วแอดมินอนุมัติอีกชั้นก่อนจะเริ่มส่งของได้</p></div>
+      <div class="feat-row"><h3>กล้องสแกนป้าย แล้วเลือกกล่องให้</h3><p>ไรเดอร์แนบป้ายพัสดุกับกล้องสแกนเนอร์ ระบบอ่านชื่อผู้รับ จับคู่กับการจองด้วยการเทียบชื่อแบบยืดหยุ่น แล้วเปิดกล่องที่ถูกต้องให้ ส่วนกล้องอีกตัวเฝ้าหน้าตู้เป็นหลักฐาน</p></div>
+      <div class="feat-row"><h3>ล็อกจริงด้วยไมโครคอนโทรลเลอร์</h3><p>Raspberry Pi สั่ง STM32 ให้ดึงสลักโซลินอยด์ จากนั้นอ่านสวิตช์ประตูกับ load cell เพื่อยืนยันว่าประตูปิดและมีของวางอยู่จริง</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="demo">
+  <div class="wrap">
+    <h2 class="sec-title">ลองเป็นลูกค้า แล้วลองเป็นไรเดอร์</h2>
+    <p class="sec-sub">กดปุ่มสีน้ำเงินใต้โทรศัพท์เพื่อเดินไปทีละขั้น ตู้ข้าง ๆ จะเปลี่ยนตามจริง และมีคำอธิบายว่าเบื้องหลังระบบกำลังทำอะไร</p>
+    <div class="tabs" role="tablist" aria-label="เลือกบทบาท">
+      <button class="tab" role="tab" aria-selected="true" data-flow="customer">ลูกค้า</button>
+      <button class="tab" role="tab" aria-selected="false" data-flow="rider">ไรเดอร์</button>
+    </div>
+    <div class="demo-grid">
+      <ol class="steps" id="steps" aria-label="ขั้นตอน"></ol>
+      <div class="phone">
+        <div class="screen">
+          <div class="bar"><div class="av"></div><div><b id="botName">OPENxBOX</b><small>บอท</small></div></div>
+          <div class="chat" id="chat" aria-live="polite"></div>
+          <div class="dock"><button class="act" id="act"></button></div>
+        </div>
+      </div>
+      <div class="side">
+        <div class="side-row"><div id="demoLocker"></div></div>
+        <div class="behind" id="behind"><small>เบื้องหลังระบบ</small><div class="ep">-</div><p></p></div>
+      </div>
+    </div>
+    <p class="note">ชื่อ ตัวเลข และภาพทั้งหมดในตัวอย่างเป็นข้อมูลสมมุติ เพื่อแสดงลำดับการทำงานเท่านั้น</p>
+  </div>
+</section>
+
+<section id="arch">
+  <div class="wrap">
+    <h2 class="sec-title">ทุกอย่างวิ่งผ่านแกนกลางตัวเดียว</h2>
+    <p class="sec-sub">บอททั้งสองตัวเป็นแค่หน้าจอ สมองทั้งหมดอยู่ใน openbox-api ซึ่งคุยกับ AI กล้อง และตัวล็อกอีกที กดแต่ละกล่องเพื่อดูรายละเอียด</p>
+    <div class="arch">
+      <div class="col">
+        <button class="node" data-k="cust" aria-pressed="false"><b>บอทลูกค้า</b><span>ลงทะเบียน จอง จ่าย รับของ</span></button>
+        <button class="node" data-k="rid" aria-pressed="false"><b>บอทไรเดอร์</b><span>ลงทะเบียน สแกนป้าย วางของ</span></button>
+      </div>
+      <div class="col">
+        <button class="node core" data-k="api" aria-pressed="true"><b>openbox-api</b><span>FastAPI + SQLite<br>เก็บข้อมูลและตัดสินใจทุกอย่าง</span></button>
+      </div>
+      <div class="col">
+        <button class="node" data-k="ai" aria-pressed="false"><b>Claude vision</b><span>อ่านบัตร ออเดอร์ ป้ายพัสดุ</span></button>
+        <button class="node" data-k="slip" aria-pressed="false"><b>SlipOK</b><span>ตรวจสลิปโอนเงิน</span></button>
+        <button class="node" data-k="hw" aria-pressed="false"><b>ตู้ล็อกเกอร์</b><span>กล้อง STM32 โซลินอยด์</span></button>
+      </div>
+    </div>
+    <div class="detail" id="detail"></div>
+    <div class="hw" aria-label="ฮาร์ดแวร์ที่เลือกใช้">
+      <span class="chip">Raspberry Pi</span><span class="chip">STM32F103 Blue Pill</span><span class="chip">โซลินอยด์ JF-0530B x2</span><span class="chip">ลิมิตสวิตช์ x2</span><span class="chip">HX711 + load cell 5 kg x2</span><span class="chip">กล้อง x2</span><span class="chip">แหล่งจ่าย 12 V และ 5 V แยกกัน</span>
+    </div>
+  </div>
+</section>
+
+<section id="status">
+  <div class="wrap">
+    <h2 class="sec-title">ตอนนี้ไปถึงไหนแล้ว</h2>
+    <p class="sec-sub">ฝั่งซอฟต์แวร์ครบทั้งเส้นทางและต่อกับบริการจริงแล้ว ส่วนที่เหลือคือฮาร์ดแวร์</p>
+    <div class="status">
+      <div class="ok">
+        <h3>ทำและทดสอบแล้ว</h3>
+        <ul>
+          <li>บอทลูกค้าและบอทไรเดอร์ ต่อ Telegram จริง</li>
+          <li>เรียก Claude vision อ่านบัตร ออเดอร์ และป้ายพัสดุได้จริง</li>
+          <li>ตรวจสลิปผ่าน SlipOK จริง รวมถึงเคสที่รูปไม่มี QR</li>
+          <li>กล้องหน้าตู้ตรวจจับการเคลื่อนไหวเพื่อยืนยันว่ามีคนมารับของ</li>
+          <li>โปรโตคอล UART ไปหา STM32 และโหมดจำลอง ทำให้รันทั้งเส้นทางได้แม้ยังไม่มีตู้จริง</li>
+        </ul>
+      </div>
+      <div class="todo">
+        <h3>ที่ยังเหลือ</h3>
+        <ul>
+          <li>เขียนเฟิร์มแวร์ STM32 ให้คุมโซลินอยด์ อ่านลิมิตสวิตช์ และ load cell</li>
+          <li>ต่อกล้องตัวที่สองเพื่อทดสอบสแกนเนอร์ป้ายพัสดุกับของจริง</li>
+          <li>ทำหน้าแอดมินสำหรับอนุมัติไรเดอร์ (ตอนนี้เรียกผ่านคำสั่งตรง)</li>
+          <li>ย้ายระบบขึ้น Raspberry Pi แล้วประกอบตัวตู้</li>
+          <li>แก้บั๊กที่ตรวจพบไว้แล้ว เช่น สถานะกล่องไม่ย้อนกลับเมื่อประตูปิดไม่สนิท</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="big">OpenBox</div>
+    <p>ตู้รับพัสดุที่รู้ว่าใครควรเปิด โปรเจคโดย cjpsms</p>
+    <div class="row"><a class="btn solid" href="https://github.com/cjpsms/openbox">github.com/cjpsms/openbox</a></div>
+  </div>
+</footer>
+
+<script>
+const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const sleep = ms => new Promise(r => setTimeout(r, RM ? Math.min(ms, 60) : ms));
+const $ = (s, r = document) => r.querySelector(s);
+
+/* ---------- locker ---------- */
+function Locker(root, interactive) {
+  root.innerHTML = `<div class="cab">
+    <div class="scan" data-on="0"><span>กล้องสแกนเนอร์</span><span class="sled"></span></div>
+    ${[['big', 1], ['small', 2]].map(([c, n], i) => `
+    <div class="bx ${c}" data-i="${i}" data-s="free" data-p="0" ${interactive ? 'data-act="1"' : ''}>
+      <div class="cav"><div class="parcel"></div></div>
+      <button class="door" ${interactive ? '' : 'tabindex="-1"'} aria-label="ประตูกล่อง ${n}"><span class="num">${n}</span><span class="led"></span><span class="handle"></span><span class="state"></span></button>
+    </div>`).join('')}
+  </div>`;
+  const names = { free: 'ว่าง', reserved: 'จองแล้ว', stored: 'มีของ', open: 'เปิดอยู่' };
+  const bx = i => root.querySelectorAll('.bx')[i];
+  const api = {
+    set(i, s, p) {
+      const b = bx(i); b.dataset.s = s; if (p !== undefined) b.dataset.p = p;
+      $('.state', b).textContent = names[s];
+    },
+    scan(on) { $('.scan', root).dataset.on = on ? 1 : 0 },
+    reset() { api.set(0, 'free', 0); api.set(1, 'free', 0); api.scan(0) }
+  };
+  api.reset();
+  if (interactive) root.querySelectorAll('.bx').forEach((b, i) => {
+    $('.door', b).addEventListener('click', () => {
+      if (b.dataset.s === 'open') api.set(i, b.dataset.prev || 'free');
+      else { b.dataset.prev = b.dataset.s; api.set(i, 'open'); }
+    });
+  });
+  return api;
+}
+const hero = Locker($('#heroLocker'), true);
+hero.set(0, 'stored', 1); hero.set(1, 'reserved', 0);
+
+/* ---------- demo script ---------- */
+const photo = k => {
+  const kinds = {
+    id: ['บัตรประจำตัวนักเรียน', `<div class="pf"><div class="ph"></div><div class="col"><div class="ln"></div><div class="ln s"></div><div class="ln m2"></div></div></div>`],
+    order: ['สรุปคำสั่งซื้อ', `<div class="ln"></div><div class="ln m2"></div><div class="ln s"></div><div class="ln"></div>`],
+    slip: ['สลิปโอนเงิน', `<div class="pf"><div class="qr"></div><div class="col"><div class="ln"></div><div class="ln s"></div></div></div>`],
+    card: ['บัตรพนักงาน', `<div class="pf"><div class="ph"></div><div class="col"><div class="ln"></div><div class="ln m2"></div><div class="ln s"></div></div></div>`],
+    label: ['ป้ายพัสดุ', `<div class="ln m2"></div><div class="ln s"></div><div class="bar-code"></div>`]
+  }[k];
+  return { t: 'photo', h: `<div class="t">${kinds[0]}</div>${kinds[1]}` };
+};
+const T = h => ({ t: 'text', h });
+const R = (title, rows) => ({ t: 'res', title, rows });
+
+const FLOWS = {
+  customer: {
+    bot: 'OPENxBOX', init: [],
+    steps: [
+      { name: 'เริ่มใช้งาน', label: 'พิมพ์ /start', me: [T('/start')],
+        bot: [T('ยังไม่พบบัญชีของคุณ<br>กรุณาส่งรูปบัตรนักเรียนเพื่อลงทะเบียน')],
+        behind: ['GET /customers/{id}', 'บอทถาม openbox-api ว่าผู้ใช้นี้เคยลงทะเบียนหรือยัง ถ้ายังจะขอรูปบัตร']},
+      { name: 'ส่งรูปบัตรนักเรียน', label: 'ส่งรูปบัตรนักเรียน', me: [photo('id')],
+        bot: [R('อ่านบัตรสำเร็จ', [['ชื่อ', 'สมชาย ใจดี'], ['รหัส', '12345'], ['ชั้น', 'ม.3/1']]), T('ข้อมูลถูกต้องไหม')],
+        behind: ['POST /customers/verify-id', 'Claude vision อ่านรูป แล้วตอบกลับเป็น JSON ว่าใช่บัตรนักเรียนไหม พร้อมชื่อและรหัส']},
+      { name: 'ยืนยันข้อมูล', label: 'กด ถูกต้อง', me: [T('ถูกต้อง')],
+        bot: [T('ลงทะเบียนเรียบร้อย<br>ส่งรูปออเดอร์ที่สั่งไว้ได้เลย')],
+        behind: ['POST /customers/register', 'บันทึกลูกค้าลงฐานข้อมูล ผูกกับ Telegram id']},
+      { name: 'ส่งรูปออเดอร์', label: 'ส่งรูปออเดอร์จากแอปช้อปปิ้ง', me: [photo('order')],
+        bot: [R('อ่านออเดอร์สำเร็จ', [['ผู้รับ', 'สมชาย ใจดี'], ['ขนส่ง', 'Flash Express'], ['เลขพัสดุ', 'TH01234XXXX']]), T('เลือกขนาดกล่องที่ต้องการ')],
+        behind: ['POST /customers/orders/verify', 'ภาพแต่ละแอปหน้าตาไม่เหมือนกัน จึงใช้โมเดลอ่านภาพทั่วไป ไม่ใช้การจับตำแหน่งตายตัว']},
+      { name: 'เลือกกล่อง', label: 'เลือก กล่องใหญ่ 20x30x30 ซม.', me: [T('กล่องใหญ่ 20x30x30 ซม.')],
+        bot: [T('จองกล่อง 1 ให้แล้ว<br>ค่าเช่า 20 บาท โอนแล้วส่งสลิปมาได้เลย')],
+        lk: [{ i: 0, s: 'reserved', p: 0 }],
+        behind: ['POST /reservations', 'ล็อกกล่องที่ว่างให้ลูกค้าคนนี้ และคิดค่าเช่าตามขนาด']},
+      { name: 'จ่ายเงิน', label: 'ส่งสลิปโอนเงิน', me: [photo('slip')],
+        bot: [R('SlipOK ตรวจสลิปผ่าน', [['ยอด', '20.00 บาท'], ['สถานะ', 'ไม่เคยใช้มาก่อน']]), T('ชำระแล้ว รอไรเดอร์นำของมาวาง')],
+        behind: ['POST /reservations/{id}/pay', 'อ่าน QR บนสลิปส่งให้ SlipOK ตรวจ แล้วเก็บเลขอ้างอิงไว้ กันสลิปใบเดิมถูกใช้ซ้ำ']},
+      { name: 'ไรเดอร์วางของ', label: 'ดูตอนไรเดอร์นำของมาวาง', sys: 1, me: [],
+        pre: [{ i: 0, s: 'open', p: 0 }, { d: 1700 }, { i: 0, s: 'stored', p: 1 }],
+        bot: [T('ของมาถึงแล้ว<br>ใช้ /pickup เมื่อมาถึงหน้าตู้')],
+        behind: ['telegram_push', 'เมื่อประตูปิดและ load cell รู้ว่ามีของ ระบบส่งข้อความหาลูกค้าเองโดยไม่ต้องรอให้บอทถาม']},
+      { name: 'รับของ', label: 'พิมพ์ /pickup แล้วกดรับของ', me: [T('/pickup')],
+        bot: [T('กล้องเห็นคุณอยู่หน้าตู้แล้ว กำลังปลดล็อกกล่อง 1')],
+        lk: [{ i: 0, s: 'open', p: 1 }],
+        post: [{ d: 2000 }, { i: 0, s: 'free', p: 0 }], after: [T('รับของเรียบร้อย ขอบคุณที่ใช้บริการ')],
+        behind: ['POST /reservations/{id}/pickup-request', 'กล้องหน้าตู้ต้องเห็นว่ามีคนอยู่จริงก่อน ระบบจึงสั่ง STM32 ปลดล็อก']}
+    ]
+  },
+  rider: {
+    bot: 'OPENxBOXxAGENT', init: [{ i: 0, s: 'reserved', p: 0 }],
+    steps: [
+      { name: 'เริ่มใช้งาน', label: 'พิมพ์ /start', me: [T('/start')],
+        bot: [T('ยินดีต้อนรับไรเดอร์<br>พิมพ์ชื่อ-นามสกุลเพื่อลงทะเบียน')],
+        behind: ['GET /riders/{id}', 'ตรวจสถานะไรเดอร์ มี 4 แบบ คือ ยังไม่สมัคร รออนุมัติ อนุมัติแล้ว และถูกปฏิเสธ']},
+      { name: 'ใส่ชื่อ', label: 'พิมพ์ชื่อ-นามสกุล', me: [T('ธนา รวดเร็ว')],
+        bot: [T('ชื่อ ธนา รวดเร็ว ถูกต้องไหม<br>กดแชร์เบอร์โทรจาก Telegram เพื่อยืนยัน')],
+        behind: ['POST /riders/register', 'เก็บชื่อไว้ก่อน แล้วขั้นต่อไปยืนยันเบอร์']},
+      { name: 'ยืนยันเบอร์', label: 'กดแชร์เบอร์โทร', me: [T('แชร์เบอร์ของฉัน')],
+        bot: [T('ยืนยันเบอร์แล้ว<br>ส่งรูปบัตรพนักงานต่อได้เลย')],
+        behind: ['handle_contact', 'ใช้ปุ่มแชร์เบอร์ของ Telegram ซึ่งปลอมไม่ได้ และบอทปฏิเสธเบอร์ที่ไม่ใช่ของคนส่งเอง']},
+      { name: 'ส่งบัตรพนักงาน', label: 'ส่งรูปบัตรพนักงาน', me: [photo('card')],
+        bot: [R('AI คัดกรองเบื้องต้นผ่าน', [['บริษัท', 'Flash Express'], ['ชื่อบนบัตร', 'ตรงกับที่สมัคร']]), T('ส่งให้แอดมินพิจารณาแล้ว กรุณารอการอนุมัติ')],
+        behind: ['POST /riders/{id}/card', 'AI เช็กว่าเป็นบัตรพนักงานจริง ชื่อตรง และเป็นบริษัทขนส่งที่รองรับ ก่อนส่งต่อให้คนตัดสินใจ']},
+      { name: 'แอดมินอนุมัติ', label: 'ดูตอนแอดมินอนุมัติ', sys: 1, me: [],
+        bot: [T('คุณได้รับอนุมัติแล้ว<br>ใช้ /drop เมื่อมาถึงตู้พร้อมพัสดุ')],
+        behind: ['POST /riders/{id}/approve', 'คนตัดสินขั้นสุดท้ายเสมอ ตอนนี้เรียกผ่านคำสั่งตรง หน้าแอดมินยังอยู่ในรายการที่จะทำ']},
+      { name: 'เริ่มส่งของ', label: 'พิมพ์ /drop', me: [T('/drop')],
+        bot: [T('เปิดกล้องสแกนเนอร์แล้ว<br>แนบป้ายพัสดุกับกระจกค้างไว้สักครู่')],
+        pre: [{ scan: 1 }],
+        behind: ['POST /drop-sessions', 'เริ่มรอบส่งของ กล้องตัวที่สองเปิดไฟและรอจนเห็นภาพที่เปลี่ยนไปแล้วนิ่ง']},
+      { name: 'สแกนป้าย', label: 'แนบป้ายพัสดุที่สแกนเนอร์', me: [photo('label')],
+        pre: [{ d: 900 }, { scan: 0 }],
+        bot: [R('อ่านป้ายพัสดุแล้ว', [['ผู้รับ', 'ส*** ใ***'], ['เลขพัสดุ', 'TH01234XXXX'], ['พบ', '1 รายการที่จองไว้']]), T('ยืนยันวางของลงกล่อง 1')],
+        behind: ['cam2 + Claude vision', 'ภาพป้ายถูกอ่านเป็นข้อความ แล้วเทียบกับรายการจองด้วย difflib ชื่อผู้รับจึงเขียนผิดเล็กน้อยก็ยังจับคู่ได้ และไรเดอร์เห็นแค่ชื่อที่ถูกปิดบังไว้']},
+      { name: 'วางของ', label: 'กด ยืนยัน', me: [T('ยืนยัน')],
+        bot: [T('เปิดกล่อง 1 แล้ว วางของและปิดประตูให้สนิท')],
+        lk: [{ i: 0, s: 'open', p: 0 }],
+        post: [{ d: 2000 }, { i: 0, s: 'stored', p: 1 }], after: [R('ส่งของสำเร็จ', [['ประตู', 'ปิดสนิท'], ['น้ำหนัก', 'ตรวจพบของ']]), T('ระบบแจ้งลูกค้าให้มารับแล้ว')],
+        behind: ['POST /drop-sessions/{id}/confirm', 'สั่ง OPEN 1 ไปที่ STM32 แล้วรอเหตุการณ์ประตูปิด และน้ำหนักเปลี่ยน ก่อนจะนับว่าส่งสำเร็จ']}
+    ]
+  }
+};
+
+/* ---------- demo engine ---------- */
+const chat = $('#chat'), act = $('#act'), stepsEl = $('#steps');
+const demoLocker = Locker($('#demoLocker'), false);
+let cur = 'customer', n = 0, token = 0, busy = false;
+
+function bubble(side, m, instant) {
+  let el;
+  if (m.t === 'photo') { el = document.createElement('div'); el.className = 'photo'; el.innerHTML = m.h; if (instant) el.style.animation = 'none'; }
+  else {
+    el = document.createElement('div');
+    el.className = 'm ' + side + (m.t === 'res' ? ' res' : '');
+    el.innerHTML = m.t === 'res' ? `<h4>${m.title}</h4><dl>${m.rows.map(r => `<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join('')}</dl>` : m.h;
+    if (instant) el.style.animation = 'none';
+  }
+  chat.appendChild(el); chat.scrollTop = chat.scrollHeight;
+}
+async function typing(ms) {
+  const t = document.createElement('div'); t.className = 'm bot typing'; t.innerHTML = '<i></i><i></i><i></i>';
+  chat.appendChild(t); chat.scrollTop = chat.scrollHeight; await sleep(ms); t.remove();
+}
+function applyL(list) { list.forEach(x => { if (x.scan !== undefined) demoLocker.scan(x.scan); else if (x.i !== undefined) demoLocker.set(x.i, x.s, x.p); }); }
+async function runL(list, my) {
+  for (const x of list) { if (my !== token) return; if (x.d) await sleep(x.d); else applyL([x]); }
+}
+function finalL(list) { // instant: apply states, skipping delays
+  applyL(list);
+}
+function setBehind(b) {
+  $('#behind').innerHTML = `<small>เบื้องหลังระบบ</small><div class="ep">${b[0]}</div><p>${b[1]}</p>`;
+}
+function renderSteps() {
+  const F = FLOWS[cur];
+  stepsEl.innerHTML = F.steps.map((s, i) => `<li><button class="${i < n ? 'done' : i === n ? 'now' : ''}" data-i="${i}"><span class="dot"></span><span>${s.name}</span></button></li>`).join('');
+  const s = F.steps[n];
+  if (s) { act.textContent = s.label; act.className = 'act' + (s.sys ? ' sys' : ''); act.disabled = false; }
+  else { act.textContent = 'เริ่มใหม่ตั้งแต่ต้น'; act.className = 'act'; act.disabled = false; }
+}
+function reset() {
+  token++; busy = false; chat.innerHTML = ''; demoLocker.reset(); finalL(FLOWS[cur].init);
+  $('#botName').textContent = FLOWS[cur].bot;
+  $('#behind').innerHTML = '<small>เบื้องหลังระบบ</small><div class="ep">-</div><p>กดปุ่มใต้โทรศัพท์เพื่อเริ่ม</p>';
+}
+function stepInstant(s) {
+  s.me.forEach(m => bubble('me', m, true)); s.bot.forEach(m => bubble('bot', m, true));
+  (s.after || []).forEach(m => bubble('bot', m, true));
+  [...(s.pre || []), ...(s.lk || []), ...(s.post || [])].forEach(x => { if (!x.d) applyL([x]); });
+  setBehind(s.behind);
+}
+function jump(i) {
+  reset(); n = 0;
+  for (; n < i; n++) stepInstant(FLOWS[cur].steps[n]);
+  chat.scrollTo({ top: chat.scrollHeight, behavior: 'instant' });
+  renderSteps();
+}
+async function play() {
+  const F = FLOWS[cur], s = F.steps[n]; if (!s) { jump(0); return; }
+  const my = ++token; busy = true; act.disabled = true;
+  s.me.forEach(m => bubble('me', m)); setBehind(s.behind);
+  if (s.pre) await runL(s.pre, my);
+  await sleep(500); if (my !== token) return;
+  for (const m of s.bot) { await typing(750); if (my !== token) return; bubble('bot', m); }
+  if (s.lk) await runL(s.lk, my);
+  if (s.post) await runL(s.post, my);
+  if (s.after) for (const m of s.after) { await typing(600); if (my !== token) return; bubble('bot', m); }
+  if (my !== token) return;
+  n++; busy = false; renderSteps();
+}
+act.addEventListener('click', () => { if (!busy) play(); });
+stepsEl.addEventListener('click', e => { const b = e.target.closest('button'); if (b) jump(+b.dataset.i); });
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', x === t));
+  cur = t.dataset.flow; jump(0);
+}));
+jump(0);
+
+/* ---------- architecture ---------- */
+const DETAIL = {
+  api: ['openbox-api', 'โปรแกรมเดียวที่ถือข้อมูลทั้งหมด ทั้งลูกค้า ไรเดอร์ การจอง การจ่ายเงิน และสถานะกล่อง บอทไม่เก็บอะไรเอง จึงเปลี่ยนหน้าจอเป็นเว็บหรือแอปได้ในภายหลังโดยไม่ต้องแตะกฎของระบบ', ['FastAPI', 'SQLite', 'พอร์ต 4002', 'รันบน Raspberry Pi']],
+  cust: ['บอทลูกค้า', 'หน้าจอฝั่งผู้รับ คุยผ่าน Telegram ใช้รูปภาพเป็นหลักแทนการกรอกฟอร์ม และรับคำสั่ง /pickup เมื่อมาถึงหน้าตู้', ['python-telegram-bot', 'ส่งรูปบัตร ออเดอร์ สลิป']],
+  rid: ['บอทไรเดอร์', 'หน้าจอฝั่งขนส่ง สมัครด้วยชื่อ เบอร์ที่ยืนยันแล้ว และบัตรพนักงาน เมื่อได้รับอนุมัติจึงใช้ /drop เพื่อเริ่มสแกนป้ายและวางของ', ['python-telegram-bot', 'ต้องผ่านการอนุมัติ']],
+  ai: ['Claude vision', 'อ่านภาพที่หน้าตาไม่เหมือนกันทุกครั้ง เช่น บัตร ภาพออเดอร์จากแต่ละแอป และป้ายพัสดุของแต่ละขนส่ง คำสั่งบังคับให้ตอบเป็น JSON แล้วระบบค่อยนำไปเทียบกับข้อมูลที่มี', ['บัตรนักเรียน', 'บัตรพนักงาน', 'ออเดอร์', 'ป้ายพัสดุ']],
+  slip: ['SlipOK', 'บริการตรวจสลิปโอนเงินของไทย อ่านจาก QR มาตรฐานบนสลิป ใช้เฉพาะขั้นจ่ายเงิน เพราะภาพออเดอร์ไม่มี QR มาตรฐานแบบนี้ จึงต้องใช้ AI อ่านภาพแทน', ['ตรวจสลิปจริง', 'กันสลิปซ้ำด้วยเลขอ้างอิง']],
+  hw: ['ตู้ล็อกเกอร์', 'กล้องหน้าตู้เฝ้าดูว่ามีคนอยู่และเก็บเป็นหลักฐาน กล้องสแกนเนอร์อ่านป้ายพัสดุ ส่วน STM32 รับคำสั่งผ่าน UART ไปดึงสลักโซลินอยด์ และรายงานกลับว่าประตูปิดและน้ำหนักเปลี่ยนหรือไม่ ประตูตู้ยังเปิด-ปิดด้วยมือ มอเตอร์ทำหน้าที่ปลดสลักเท่านั้น', ['STM32F103', 'โซลินอยด์ x2', 'HX711', 'กล้อง x2']]
+};
+function showDetail(k) {
+  const d = DETAIL[k];
+  $('#detail').innerHTML = `<div><h3>${d[0]}</h3><div class="tags">${d[2].map(t => `<span class="chip">${t}</span>`).join('')}</div></div><p>${d[1]}</p>`;
+  document.querySelectorAll('.node').forEach(b => b.setAttribute('aria-pressed', b.dataset.k === k));
+}
+document.querySelectorAll('.node').forEach(b => b.addEventListener('click', () => showDetail(b.dataset.k)));
+showDetail('api');
+</script>
+</body>
+</html>
